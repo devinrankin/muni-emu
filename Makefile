@@ -1,4 +1,4 @@
-PROJ_NAME := gbc_emulator
+PROJ_NAME := Muni
 BUILD_DIR := build
 SRC_DIR := src
 
@@ -8,7 +8,7 @@ SDL_PREFIX := $(CURDIR)/build/sdl-install
 
 CC := clang
 CPPFLAGS += -I$(SDL_PREFIX)/include
-CFLAGS += -Wall -Werror
+CFLAGS += -Wall -Wextra -Werror
 LDFLAGS += -L$(SDL_PREFIX)/lib
 LDLIBS += -lSDL3
 
