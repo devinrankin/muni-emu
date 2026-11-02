@@ -4,10 +4,9 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <time.h>
+#include <stdbool.h>
 
-#include "mbc_state.h"
-
-typedef enum mbc_type {
+typedef enum {
     MBC_TYPE_NONE,
     MBC_TYPE_MBC1,
     MBC_TYPE_MBC2,
@@ -20,29 +19,71 @@ typedef enum mbc_type {
     MBC_TYPE_HUC1,
     MBC_TYPE_HUC3,
     MBC_TYPE_OTHER
-} mbc_type_t;
+} MbcType;
 
-typedef struct mbc mbc_t;
+typedef struct rtc {
+    uint8_t seconds;
+    uint8_t minutes;
+    uint8_t hours;
+    uint8_t days_low;
+    uint8_t days_high;
+} Rtc;
 
-struct mbc {
-    mbc_type_t type;
+typedef struct {
+    uint8_t rom_bank_low;
+    uint8_t bank_high;
+    uint8_t banking_mode;
+    bool ram_enabled;
+} Mbc1State;
 
-    const uint8_t* rom;
-    uint8_t* ram;
+typedef struct {
+    uint8_t rom_bank;
+    bool ram_enabled;
+} Mbc2State;
 
-    uint8_t (*read)(mbc_t* mbc, uint16_t address);
-    void (*write)(mbc_t* mbc, uint16_t address, uint8_t value);
+typedef struct {
+    uint8_t rom_bank;
+    uint8_t ram_rtc_select;
+    bool ram_enabled;
+
+    Rtc current_rtc;
+    Rtc latched_rtc;
+   
+    bool rtc_latched;
+    uint8_t rtc_latch_value;
+    uint64_t last_timestamp;
+} Mbc3State;
+
+typedef struct {
+    uint16_t rom_bank;
+    uint8_t ram_bank;
+    bool ram_enabled;
+} Mbc5State;
+
+typedef struct Mbc Mbc;
+
+struct Mbc {
+    MbcType type;
+
+    const uint8_t *rom;
+    size_t rom_size;
+    uint8_t *ram;
+    size_t ram_size;
+
+    uint8_t (*read)(Mbc *mbc, uint16_t address);
+    void (*write)(Mbc *mbc, uint16_t address, uint8_t value);
 
     union {
-        mbc1_state_t mbc1;
-        mbc2_state_t mbc2;
-        mbc3_state_t mbc3;
-        mbc5_state_t mbc5;
+        Mbc1State mbc1;
+        Mbc2State mbc2;
+        Mbc3State mbc3;
+        Mbc5State mbc5;
     } state;
 };
 
-void mbc_init(mbc_t* mbc, mbc_type_t type, const uint8_t* rom, uint8_t* ram);
-uint8_t mbc_read(mbc_t* mbc, uint16_t address);
-void mbc_write(mbc_t* mbc, uint16_t address, uint8_t value);
+void mbc_init(Mbc *mbc, MbcType type, const uint8_t *rom, size_t rom_size, uint8_t *ram, size_t ram_size);
+void mbc_deinit(Mbc *mbc);
+uint8_t mbc_read(Mbc *mbc, uint16_t address);
+void mbc_write(Mbc *mbc, uint16_t address, uint8_t value);
 
 #endif
