@@ -1,7 +1,13 @@
-*.gbc
+*.gb*
 build*/
 roms/
 test-roms/
 .vim
 .DS_Store
-TODO.md
+*.txt
+*.log
+*.bin
+*.ppm
+*.dump
+*.sav
+*.state
