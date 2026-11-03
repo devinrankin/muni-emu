@@ -1,398 +1,454 @@
+#include <string.h>
 #include "ppu.h"
-#include "ppu_fifo.h"
 
+/* DOT counts */
 #define PPU_MODE_DOTS_OAM 80
-#define PPU_DOTS_PER_LINE 456 
+#define PPU_DOTS_PER_LINE 456
+#define PPU_DOTS_PER_FRAME (PPU_DOTS_PER_LINE * PPU_LY_BOTTOM) /* 70224 */
 
+/* LY breakpoints */
 #define PPU_LY_VBLANK 144
 #define PPU_LY_BOTTOM 154
 
+/* Tile Map VRAM Base Addresses */
+#define PPU_ADDR_VRAM_TILEMAP0_BASE 0x9800
+#define PPU_ADDR_VRAM_TILEMAP1_BASE 0x9C00
+
+/* Tile Data VRAM Base Addresses */
+#define PPU_ADDR_VRAM_TILEDATA0_BASE 0x9000
+#define PPU_ADDR_VRAM_TILEDATA1_BASE 0x8000
+
 /* LCDC bits */
-#define PPU_LCDC_BGW_ENPRI 0u
-#define PPU_LCDC_OBJ_EN 1u
-#define PPU_LCDC_OBJ_SIZE 2u
-#define PPU_LCDC_BG_TILE_MAP_AREA 3u
-#define PPU_LCDC_BGW_TILE_DATA_AREA 4u
-#define PPU_LCDC_WIN_EN 5u
-#define PPU_LCDC_WIN_TILE_MAP_AREA 6u
-#define PPU_LCDC_LCD_PPU_EN 7u
+#define PPU_LCDC_LCD_ENABLE_BIT 7u
+#define PPU_LCDC_WINDOW_TILEMAP_AREA_BIT 6u
+#define PPU_LCDC_WINDOW_ENABLE_BIT 5u
+#define PPU_LCDC_BGW_TILEDATA_AREA_BIT 4u
+#define PPU_LCDC_BG_TILEMAP_AREA_BIT 3u
+#define PPU_LCDC_OBJ_SIZE_BIT 2u
+#define PPU_LCDC_OBJ_ENABLE_BIT 1u
+#define PPU_LCDC_BGW_ENABLE_BIT 0u
 
 /* STAT bits */
-#define PPU_STAT_PPU_MODE_MASK 3u // this is 2 bits, probably won't use this
-#define PPU_STAT_LYC 2u
-#define PPU_STAT_MODE0_INTERRUPT 3u
-#define PPU_STAT_MODE1_INTERRUPT 4u
-#define PPU_STAT_MODE2_INTERRUPT 5u
-#define PPU_STAT_LYC_INTERRUPT 6u
+#define PPU_STAT_LYC_INTERRUPT_BIT 6u
+#define PPU_STAT_MODE_OAM_INTERRUPT_BIT 5u
+#define PPU_STAT_MODE_VBLANK_INTERRUPT_BIT 4u
+#define PPU_STAT_MODE_HBLANK_INTERRUPT_BIT 3u
+#define PPU_STAT_LYC_EQ_BIT 2u
 
-#define PPU_NUM_PX_PER_FETCH 8u
-#define PPU_TILES_PER_MAP_ROW 32u
+/* Tile Data Attribute bits */
+#define PPU_TILEDATA_ATTR_PALETTE_MASK 0x7
+#define PPU_TILEDATA_ATTR_BANK_BIT 3u
+#define PPU_TILEDATA_ATTR_DMG_PALETTE_BIT 4u // OBJ tile data only
+#define PPU_TILEDATA_ATTR_X_FLIP_BIT 5u
+#define PPU_TILEDATA_ATTR_Y_FLIP_BIT 6u
+#define PPU_TILEDATA_ATTR_PRI_BIT 7u
+
+#define PPU_PX_PER_FETCH 8u
 #define PPU_BYTES_PER_TILE 16u
-#define PPU_BYTES_PER_OBJ 4u
-#define PPU_BYTES_PER_COLOR 2u
-
-#define PPU_TILE_DATA_ROW_MASK 0x7
-
-/* BG Map Attribute bits */
-#define PPU_BG_MAP_ATTR_PALETTE_MASK 7u
-#define PPU_BG_MAP_ATTR_BANK 3u
-#define PPU_BG_MAP_ATTR_X_FLIP 5u
-#define PPU_BG_MAP_ATTR_Y_FLIP 6u
-#define PPU_BG_MAP_ATTR_PRIO 7u
-
-/* OAM Attribute bits */
-#define PPU_OBJ_ATTR_PALETTE_MASK 7u
-#define PPU_OBJ_ATTR_BANK 3u
-#define PPU_OBJ_ATTR_DMG_PALETTE 4u
-#define PPU_OBJ_ATTR_X_FLIP 5u
-#define PPU_OBJ_ATTR_Y_FLIP 6u
-#define PPU_OBJ_ATTR_PRIO 7u
-
-#define PPU_OBJ_PER_SCREEN 40u
-#define PPU_OBJ_HEIGHT0 8u
-#define PPU_OBJ_HEIGHT1 16u
 #define PPU_OBJ_OFFSET_Y 16u
 #define PPU_OBJ_OFFSET_X 8u
 
-static const uint32_t dmg_colors[4] = {
-    0xFFFFFFFF,
-    0xFFAAAAAA,
-    0xFF555555,
-    0xFF000000,
-};
+static inline uint8_t ppu_vram_read(const Ppu *ppu, uint8_t bank, uint16_t address);
+static inline uint8_t stat_mode(const Ppu *ppu);
+static inline void stat_mode_transition(Ppu *ppu, PpuMode mode);
+static void ppu_load_dmg_palettes(Ppu *ppu);
+static bool ppu_palette_locked(const Ppu *ppu);
+static void ppu_mode_transition_oam(Ppu *ppu);
+static void ppu_mode_transition_draw(Ppu *ppu);
+static void ppu_mode_transition_hblank(Ppu *ppu);
+static void ppu_mode_transition_vblank(Ppu *ppu);
+static void ppu_update_stat_line(Ppu *ppu);
+static void ppu_end_of_line(Ppu *ppu);
+static void ppu_oam_scan(Ppu *ppu);
+static void ppu_draw_step(Ppu *ppu);
+static uint16_t ppu_pixel_to_rgb555(const Ppu *ppu, PpuPixel px);
+static void ppu_bgw_refill(Ppu *ppu);
+static void ppu_obj_refill(Ppu *ppu, const PpuObj *obj);
+static PpuObj *ppu_obj_next_due(Ppu *ppu);
+static PpuPixel ppu_resolve(const Ppu *ppu, PpuPixel bg, PpuPixel obj);
+static inline uint16_t ppu_tile_map_base_address(const Ppu *ppu);
+static inline uint16_t ppu_tile_data_address(const Ppu *ppu, uint8_t tile, uint8_t row);
+static inline uint8_t ppu_row_pixel(uint8_t low, uint8_t high, uint8_t x, bool flip);
 
-/* Local function declarations */
-static void ppu_oam_scan_step(ppu_t* ppu);
 
-static uint16_t ppu_tile_map_base(const ppu_t* ppu, bool window);
-static uint16_t ppu_tile_data_address(const ppu_t* ppu, uint8_t tile, uint8_t row);
-static uint8_t ppu_tile_data_bank(const ppu_t* ppu);
-
-static void ppu_fetch_tile(ppu_t* ppu);
-static void ppu_fetch_tile_data_low(ppu_t* ppu);
-static void ppu_fetch_tile_data_high(ppu_t* ppu);
-static bool ppu_fetch_push(ppu_t* ppu);
-static void ppu_fetcher_step(ppu_t* ppu);
-
-static void ppu_mode_transition_oam(ppu_t* ppu);
-static void ppu_mode_transition_draw(ppu_t* ppu);
-static bool ppu_is_cgb(const ppu_t* ppu);
-static uint8_t ppu_dmg_shade(const ppu_t* ppu, uint8_t color);
-
-static uint8_t ppu_read_vram(ppu_t* ppu, uint8_t bank, uint16_t address); 
-static uint8_t ppu_read_oam(ppu_t* ppu, uint16_t address);
-
-static uint16_t (*ppu_get_pixel_color)(ppu_pixel_t*, ppu_pixel_t*);
-
-void dump_framebuffer(ppu_t *ppu) {
-    (void)ppu;
-/* TODO: part of debug mode */
+void ppu_init(Ppu *ppu, Bus *bus) {
+    *ppu = (Ppu) {
+        .bus = bus,
+        .lcd_on = false,
+        .mode_x = 0,
+        .line_dots = 0,
+        .frame_ready = false,
+        .discard_px = 0,
+        .y_cond = false,
+        .window_active = false,
+        .window_line = 0,
+    };
+    ppu->cgb = !BIT(ppu->bus->key0, 2u);
+    if (!ppu->cgb) {
+        ppu_load_dmg_palettes(ppu);
+    }
 }
 
-void ppu_init(ppu_t* ppu, bus_t* bus) {
-    ppu->bus = bus;
-    ppu->mode = PPU_MODE_OAM;
-    ppu->line_dots = 0;
+void ppu_step(Ppu *ppu) {
+    if (!BIT(ppu->bus->lcdc, PPU_LCDC_LCD_ENABLE_BIT)) {
+        if (ppu->lcd_on) {
+            ppu->lcd_on = false;
+            ppu->line_dots = 0;
+            ppu->bus->ly = 0;
+            ppu->stat_line = false;
+            ppu->off_dots = 0;
+            ppu_mode_transition_hblank(ppu);
+            for (int i = 0; i < LCD_XRES * LCD_YRES; i++) ppu->framebuf[i] = 0x7FFF;
+        }
 
-    ppu_fifo_clear(&ppu->bgw_fifo);
-    ppu_fifo_clear(&ppu->obj_fifo);
-}
+        if (++ppu->off_dots >= PPU_DOTS_PER_FRAME) {
+            ppu->off_dots = 0;
+            ppu->frame_ready = true;
+        }
+        return;
+    }
 
-void ppu_step(ppu_t* ppu) {
-    /* Request STAT interrupt if LYC = LY */
-    if (ppu->bus->io.lyc == ppu->bus->io.ly) {
-        BIT_SET(ppu->bus->io.stat, 2);
-        io_request_interrupt(&ppu->bus->io, INTERRUPT_BIT_STAT);
+    if (!ppu->lcd_on) {
+        ppu->lcd_on = true;
+        ppu_mode_transition_oam(ppu);
     }
 
     ppu->line_dots++;
-    switch (ppu->mode) {
+
+    switch (stat_mode(ppu)) {
     case PPU_MODE_OAM:
-        ppu_oam_scan_step(ppu);
-        if (ppu->line_dots == PPU_MODE_DOTS_OAM) { 
-            ppu->mode = PPU_MODE_DRAW;
+        if (ppu->line_dots == PPU_MODE_DOTS_OAM) {
+            ppu_oam_scan(ppu);
             ppu_mode_transition_draw(ppu);
         }
         break;
     case PPU_MODE_DRAW: {
-        const bool window_enabled = ppu->y_cond && BIT(ppu->bus->io.lcdc, PPU_LCDC_WIN_EN);
-        int16_t window_left = (int16_t)ppu->bus->io.wx - 7;
+        const bool window_enabled = ppu->y_cond && BIT(ppu->bus->lcdc, PPU_LCDC_WINDOW_ENABLE_BIT);
+        int16_t window_left = (int16_t)ppu->bus->wx - 7;
 
-        if (!ppu->window_active && window_enabled && window_left < PPU_XRES && (int16_t)ppu->xpos >= (window_left < 0 ? 0 : window_left)) {
+        if (!ppu->window_active && window_enabled && window_left < LCD_XRES && (int16_t)ppu->mode_x >= (window_left < 0 ? 0 : window_left)) {
             ppu->window_active = true;
-            ppu->fetch_tile_x = 0;
-            ppu->fetch_dots = 0;
-            ppu->fetch_state = FETCH_TILE;
+            ppu->bg_tx = 0;
+            ppu->discard_px = 0;
+            ppu->stall = 6;
             ppu_fifo_clear(&ppu->bgw_fifo);
         }
-
-        ppu_fetcher_step(ppu);
-
-        ppu_pixel_t pixel;
-        if (!ppu_fifo_pop(&ppu->bgw_fifo, &pixel)) {
-            break;
-        }
-
-        if (ppu->discard_pixels != 0) {
-            ppu->discard_pixels--;
-            break;
-        }
-
-        if (ppu->xpos < PPU_XRES) {
-            if (!ppu_is_cgb(ppu)) {
-                pixel.color = ppu_dmg_shade(ppu, pixel.color);
-            }
-
-            ppu->framebuffer[ppu->bus->io.ly * PPU_XRES + ppu->xpos] = pixel;
-            ppu->xpos++;
-        }
-        
-        if (ppu->xpos >= PPU_XRES) {
-            ppu->mode = PPU_MODE_HBLANK;
+        ppu_draw_step(ppu);
+        if (ppu->mode_x >= LCD_XRES) {
+            ppu_mode_transition_hblank(ppu); 
+            bus_hdma_hblank(ppu->bus);
         }
         break;
     }
     case PPU_MODE_HBLANK: 
-        if (ppu->line_dots != PPU_DOTS_PER_LINE) {
-            break;
-        }
-
-        ppu->line_dots = 0;
-        ppu->bus->io.ly++;
-       
-        if (ppu->bus->io.ly == PPU_LY_VBLANK) {
-            ppu->mode = PPU_MODE_VBLANK;
-            io_request_interrupt(&ppu->bus->io, INTERRUPT_BIT_VBLANK);
-        } else {
-            ppu->mode = PPU_MODE_OAM;
-            ppu_mode_transition_oam(ppu);
-        }
-        break;
-    /* V-Blank Mode */
-    case PPU_MODE_VBLANK:
-        /* One scanline of V-Blank is equivalent to the duration of modes 2, 3, and 0 combined. */
-        if (ppu->line_dots == PPU_DOTS_PER_LINE) {
-            ppu->line_dots = 0;
-            ppu->bus->io.ly++;
-            if (ppu->bus->io.ly >= PPU_LY_BOTTOM) {
-                ppu->bus->io.ly = 0;
-                ppu->mode = PPU_MODE_DRAW;
-                ppu_mode_transition_oam(ppu);
-            }
-        }
+    case PPU_MODE_VBLANK: 
+        if(ppu->line_dots == PPU_DOTS_PER_LINE) ppu_end_of_line(ppu);
         break;
     }
+    ppu_update_stat_line(ppu);
 }
 
-static void ppu_oam_scan_step(ppu_t* ppu) {
-    if ((ppu->line_dots & 1u) == 0) {
-        return;
-    }
+uint8_t ppu_palette_read(const Ppu *ppu, bool obj) {
+    if (ppu_palette_locked(ppu)) return 0xFF;
 
-    if (ppu->oam_scan_index >= PPU_OBJ_PER_SCREEN) {
-        return;
-    }
-
-    uint8_t oam_index = ppu->oam_scan_index++;
-    uint16_t address = (uint16_t)(ADDR_OAM_BASE + PPU_BYTES_PER_OBJ * oam_index);
-
-    uint8_t y = ppu_read_oam(ppu, address);
-    uint8_t x = ppu_read_oam(ppu, address + 1);
-    uint8_t tile = ppu_read_oam(ppu, address + 2);
-    uint8_t attr = ppu_read_oam(ppu, address + 3);
-
-    uint8_t height = BIT(ppu->bus->io.lcdc, PPU_LCDC_OBJ_SIZE) ? PPU_OBJ_HEIGHT1 : PPU_OBJ_HEIGHT0;
-    
-    if (ppu->bus->io.ly + PPU_OBJ_OFFSET_Y < y || ppu->bus->io.ly + PPU_OBJ_OFFSET_Y >= y + height) {
-        return;
-    }
-
-    if (ppu->obj_count < OBJ_BUF_CAPACITY) {
-        ppu->obj_buffer[ppu->obj_count++] = (ppu_obj_t) {
-            .y = y,
-            .x = x,
-            .tile = tile,
-            .attr = attr,
-            .oam_index = oam_index
-        };
-    }
+    uint8_t idx = (obj ? ppu->bus->obpi : ppu->bus->bgpi) & 0x3F;
+    return (obj ? ppu->obj_palettes : ppu->bgw_palettes)[idx];
 }
 
-static void ppu_fetch_tile(ppu_t* ppu) {
-    const bool window = ppu->window_active;
-    uint8_t tile_x;
-    uint8_t tile_y;
-    uint8_t tile_row;
-   
-    /* A tile is 8x8 pixels */
-    if (window) {
-        tile_x = ppu->fetch_tile_x & 0x1F;
-        tile_y = (ppu->window_line >> 3) & 0x1F;
-        tile_row = ppu->window_line & 7; 
-    } else {   
-        uint8_t bg_y = (ppu->bus->io.scy + ppu->bus->io.ly) & 0xFF;
+void ppu_palette_write(Ppu *ppu, bool obj, uint8_t value) {
+    uint8_t *pi = obj ? &ppu->bus->obpi : &ppu->bus->bgpi;
+    uint8_t *ram = obj ? ppu->obj_palettes : ppu->bgw_palettes;
+    uint8_t idx = *pi & 0x3F;
 
-        tile_x = ((ppu->bus->io.scx >> 3) + ppu->fetch_tile_x) & 0x1F;
-        tile_y = (bg_y >> 3) & 0x1F;
-        tile_row = bg_y & 7;   
-    }
-
-    uint16_t map_address = ppu_tile_map_base(ppu, window) + (uint16_t)tile_y * PPU_TILES_PER_MAP_ROW + tile_x;
-    ppu->fetch_tile = ppu_read_vram(ppu, 0, map_address);
-    ppu->fetch_tile_attr = ppu_is_cgb(ppu) ? ppu_read_vram(ppu, 1, map_address) : 0;
-    ppu->fetch_row = tile_row;
+    if (!ppu_palette_locked(ppu)) ram[idx] = value;
+    if (BIT(*pi, 7)) *pi = (*pi & 0x80) | ((idx + 1) & 0x3F);
 }
 
-static void ppu_fetch_tile_data_low(ppu_t* ppu) {
-    if (BIT(ppu->fetch_tile_attr, PPU_BG_MAP_ATTR_Y_FLIP)) {
-        ppu->fetch_row = 7 - ppu->fetch_row;
-    }
-
-    uint16_t data_address = ppu_tile_data_address(ppu, ppu->fetch_tile, ppu->fetch_row);
-    
-    ppu->fetch_low = ppu_read_vram(ppu, ppu_tile_data_bank(ppu), data_address);
-
+static inline uint8_t ppu_vram_read(const Ppu *ppu, uint8_t bank, uint16_t address) {
+    return ppu->bus->vram[BIT(bank, 0u) * ADDR_VRAM_SIZE + (address - ADDR_VRAM_BASE)];
 }
 
-static void ppu_fetch_tile_data_high(ppu_t* ppu) {
-    uint16_t data_address = ppu_tile_data_address(ppu, ppu->fetch_tile, ppu->fetch_row);
-
-    ppu->fetch_high = ppu_read_vram(ppu, ppu_tile_data_bank(ppu), data_address + 1);
+static inline uint8_t stat_mode(const Ppu *ppu) {
+    return ppu->bus->stat & 0x3;
+}
+static inline void stat_mode_transition(Ppu *ppu, PpuMode mode) {
+    ppu->bus->stat = (ppu->bus->stat & 0xFC) | (mode);
 }
 
-/* Pushes a pixel into the pixel FIFO */
-static bool ppu_fetch_push(ppu_t* ppu) {
-    if (ppu_fifo_count(&ppu->bgw_fifo) > PPU_FIFO_FETCHER_CAPACITY - PPU_NUM_PX_PER_FETCH) {
-        return false;
-    }
-    
-    bool flip_x = BIT(ppu->fetch_tile_attr, PPU_BG_MAP_ATTR_X_FLIP);
-    for (uint8_t x = 0; x < PPU_NUM_PX_PER_FETCH; x++) {
-        uint8_t bit = flip_x ? x : 7 - x;
+static void ppu_load_dmg_palettes(Ppu *ppu) {
+    static const uint16_t gray[4] = { 0x7FFF, 0x56B5, 0x294A, 0x0000 };
 
-        ppu_pixel_t pixel = {
-            .color = (uint8_t)((((ppu->fetch_high >> bit) & 1) << 1) | ((ppu->fetch_low >> bit) & 1)),
-            .palette = ppu->fetch_tile_attr & PPU_BG_MAP_ATTR_PALETTE_MASK,
-            .priority = BIT(ppu->fetch_tile_attr, PPU_BG_MAP_ATTR_PRIO),
-        };
-
-        if (!ppu_fifo_push(&ppu->bgw_fifo, pixel)) {
-            return false;
+    for (int p = 0; p < 8; p++) {
+        for (int c = 0; c < 4; c++) {
+            int off = p * 8 + c * 2;
+            ppu->bgw_palettes[off] = ppu->obj_palettes[off] = gray[c] & 0xFF;
+            ppu->bgw_palettes[off + 1] = ppu->obj_palettes[off + 1] = gray[c] >> 8;
         }
     }
-
-    ppu->fetch_tile_x++;
-    return true;
 }
 
-static void ppu_fetcher_step(ppu_t* ppu) {
-    if (ppu->fetch_state == FETCH_PUSH) {
-        if (ppu_fetch_push(ppu)) {
-            ppu->fetch_state = FETCH_TILE;
-        }
-        return;
-    }
-
-    if (++ppu->fetch_dots < 2u) {
-        return;
-    }
-    
-    switch (ppu->fetch_state) {
-    case FETCH_TILE:
-        ppu_fetch_tile(ppu);
-        ppu->fetch_state = FETCH_LOW;
-        break;
-    case FETCH_LOW:
-        ppu_fetch_tile_data_low(ppu);
-        ppu->fetch_state = FETCH_HIGH;
-        break;
-    case FETCH_HIGH:
-        ppu_fetch_tile_data_high(ppu);
-        ppu->fetch_state = FETCH_SLEEP;
-        break;
-    case FETCH_SLEEP:
-        ppu->fetch_state = FETCH_PUSH;
-        break;
-    case FETCH_PUSH:
-        /* Handled above */
-        break;
-    }
-    
-    ppu->fetch_dots = 0;
+static bool ppu_palette_locked(const Ppu *ppu) {
+    return BIT(ppu->bus->lcdc, PPU_LCDC_LCD_ENABLE_BIT) && stat_mode(ppu) == PPU_MODE_DRAW;
 }
 
-/* Check if Cartridge is CGB compatible */
-static bool ppu_is_cgb(const ppu_t* ppu) {
-    return ppu->bus->cartridge->mode != CARTRIDGE_DMG_ONLY;
-}
 
-/* Probably temporary; gets DMG color from BGP register */
-static uint8_t ppu_dmg_shade(const ppu_t* ppu, uint8_t color) {
-    return (ppu->bus->io.bgp >> (color * 2)) & 0x03;
-}
+static void ppu_mode_transition_oam(Ppu *ppu) {
+    stat_mode_transition(ppu, PPU_MODE_OAM);
 
-/* Returns the base address of the tile map used for tile data fetching */
-static uint16_t ppu_tile_map_base(const ppu_t* ppu, bool window) {
-    unsigned lcdc_bit = window ? PPU_LCDC_WIN_TILE_MAP_AREA : PPU_LCDC_BG_TILE_MAP_AREA;
-    
-    return BIT(ppu->bus->io.lcdc, lcdc_bit) ? ADDR_VRAM_TILEMAP1_BASE : ADDR_VRAM_TILEMAP0_BASE;
-}
-
-/* Returns the base address used for tile data fetching */
-static uint16_t ppu_tile_data_address(const ppu_t* ppu, uint8_t tile, uint8_t row) {
-    if (BIT(ppu->bus->io.lcdc, PPU_LCDC_BGW_TILE_DATA_AREA)) {
-        return (uint16_t)(ADDR_VRAM_TILEDATA_BLOCK0_BASE + (uint16_t)tile * PPU_BYTES_PER_TILE + (uint16_t)row * 2u);
-    }
-    return (uint16_t)(ADDR_VRAM_TILEDATA_BLOCK2_BASE + (int16_t)(int8_t)tile * PPU_BYTES_PER_TILE + (int16_t)row * 2u);
-}
-
-/* Returns the bank used for tile data fetching */
-static uint8_t ppu_tile_data_bank(const ppu_t* ppu) {
-    return ppu_is_cgb(ppu) ? (uint8_t)((ppu->fetch_tile_attr >> 3) & 1) : 0;
-}
-
-/* Sets PPU state for OAM scan mode */
-static void ppu_mode_transition_oam(ppu_t* ppu) {
-    ppu->xpos = 0;
+    ppu->mode_x = 0;
     ppu->window_active = false;
-    ppu->fetch_tile_x = 0;
-    ppu->fetch_dots = 0;
-    ppu->fetch_state = FETCH_TILE;
+    ppu->obj_count = 0;
+    if (ppu->bus->ly == ppu->bus->wy) ppu->y_cond = true;
+}
+
+static void ppu_mode_transition_draw(Ppu *ppu) {
+    stat_mode_transition(ppu, PPU_MODE_DRAW);
+
+    ppu->mode_x = 0;
+    ppu->bg_tx = 0;
+    ppu->stall = 12;
+    ppu->discard_px = ppu->bus->scx & 7;
+    ppu->window_active = false;
+
+    memset(ppu->obj_line, 0, sizeof ppu->obj_line);
     ppu_fifo_clear(&ppu->bgw_fifo);
+}
+
+static void ppu_mode_transition_hblank(Ppu *ppu) {
+    stat_mode_transition(ppu, PPU_MODE_HBLANK);
+}
+
+static void ppu_mode_transition_vblank(Ppu *ppu) {
+    stat_mode_transition(ppu, PPU_MODE_VBLANK);
+
+    ppu->frame_ready = true;
+    bus_request_interrupt(ppu->bus, INTERRUPT_BIT_VBLANK);
+}
+
+static void ppu_end_of_line(Ppu *ppu) {
+    ppu->line_dots = 0;
+    if (ppu->window_active) ppu->window_line++;
+
+    uint8_t ly = ++ppu->bus->ly;
+    if (ly == PPU_LY_VBLANK) {
+        ppu_mode_transition_vblank(ppu);
+    } else if (ly == PPU_LY_BOTTOM) {
+        ppu->bus->ly = 0;
+        ppu->window_line = 0;
+        ppu->y_cond = false;
+        ppu_mode_transition_oam(ppu);
+    } else if (ly < PPU_LY_VBLANK) {
+        ppu_mode_transition_oam(ppu);
+    }
+}
+
+static void ppu_update_stat_line(Ppu *ppu) {
+    bool lyc_eq = ppu->bus->ly == ppu->bus->lyc;
+    const uint8_t lyc_mask = 1u << PPU_STAT_LYC_EQ_BIT;
+    ppu->bus->stat = (ppu->bus->stat & ~lyc_mask) | (lyc_eq ? lyc_mask : 0);
+
+    uint8_t mode = ppu->bus->stat & 3;
+    bool line = (ppu->bus->ly == ppu->bus->lyc && BIT(ppu->bus->stat, PPU_STAT_LYC_INTERRUPT_BIT)) ||
+        (mode == PPU_MODE_VBLANK && BIT(ppu->bus->stat, PPU_STAT_MODE_VBLANK_INTERRUPT_BIT)) ||
+        (mode == PPU_MODE_HBLANK && BIT(ppu->bus->stat, PPU_STAT_MODE_HBLANK_INTERRUPT_BIT)) ||
+        (mode == PPU_MODE_OAM && BIT(ppu->bus->stat, PPU_STAT_MODE_OAM_INTERRUPT_BIT));
+    if (line && !ppu->stat_line) {
+        bus_request_interrupt(ppu->bus, INTERRUPT_BIT_STAT);
+    }
+    ppu->stat_line = line;
+}
+
+static void ppu_oam_scan(Ppu *ppu) {
+    const uint8_t ly = ppu->bus->ly;
+    const uint8_t height = BIT(ppu->bus->lcdc, PPU_LCDC_OBJ_SIZE_BIT) ? 16 : 8;
+    ppu->obj_order = ppu->cgb && !BIT(ppu->bus->opri, 0);
 
     ppu->obj_count = 0;
-    ppu->oam_scan_index = 0;
-}
+    ppu->obj_next = 0;
 
-/* Sets PPU state for draw mode */
-static void ppu_mode_transition_draw(ppu_t* ppu) {
-    ppu->xpos = 0;
-    ppu->discard_pixels = ppu->bus->io.scx & 7;
-    ppu->window_active = false;
+    for (uint8_t i = 0; i < 40 && ppu->obj_count < OAM_BUFFER_CAPACITY; i++) {
+        const uint8_t *e = &ppu->bus->oam[i * 4];
+        int row = ly + 16 - e[0];
+        if (row < 0 || row >= height) continue;
 
-    ppu->fetch_tile_x = 0;
-    ppu->fetch_dots = 0;
-    ppu->fetch_state = FETCH_TILE;
+        PpuObj obj = { 
+            .y = e[0],
+            .x = e[1],
+            .tile = e[2],
+            .attr = e[3],
+            .oam_index = i
+        };
 
-    ppu_fifo_clear(&ppu->bgw_fifo);
-}
-
-/* Reads directly from VRAM. Maybe temporary; a bit hacky since PPU needs access to both banks of VRAM whenever it wants */
-static uint8_t ppu_read_vram(ppu_t* ppu, uint8_t bank, uint16_t address) {
-    if (!BETWEEN(address, ADDR_VRAM_BASE, ADDR_VRAM_BASE + ADDR_VRAM_SIZE)) {
-        return 0xFF;
+        uint8_t j = ppu->obj_count++;
+        while (j > 0 && ppu->obj_buffer[j - 1].x > obj.x) {
+            ppu->obj_buffer[j] = ppu->obj_buffer[j - 1];
+            j--;
+        }
+        ppu->obj_buffer[j] = obj;
     }
 
-    size_t offset = (size_t)(address - ADDR_VRAM_BASE);
-    return ppu->bus->vram[(BIT(bank, 0u)) * ADDR_VRAM_SIZE + offset];
+    while (ppu->obj_next < ppu->obj_count && ppu->obj_buffer[ppu->obj_next].x == 0) {
+        ppu->obj_next++;
+    }
 }
 
-/* Same as VRAM reads, except OAM doesn't have banks; just accessing the data the same way for consistency */
-static uint8_t ppu_read_oam(ppu_t* ppu, uint16_t address) {
-    if (!BETWEEN(address, ADDR_OAM_BASE, ADDR_OAM_BASE + ADDR_OAM_SIZE)) {
-        return 0xFF;
+static void ppu_draw_step(Ppu *ppu) {
+    if (ppu->stall) {
+        ppu->stall--;
+        return;
     }
 
-    size_t offset = (size_t)(address - ADDR_OAM_BASE);
-    return ppu->bus->oam[offset];
+    PpuObj *o = ppu_obj_next_due(ppu);
+    if (o) {
+        ppu_obj_refill(ppu, o);
+        return;
+    }
+
+    if (ppu_fifo_empty(&ppu->bgw_fifo)) ppu_bgw_refill(ppu);
+
+    PpuPixel bg;
+    ppu_fifo_pop(&ppu->bgw_fifo, &bg);
+    if (ppu->discard_px) {
+        ppu->discard_px--;
+        return;
+    }
+
+    PpuPixel out = ppu_resolve(ppu, bg, ppu->obj_line[ppu->mode_x]);
+    ppu->framebuf[ppu->bus->ly * LCD_XRES + ppu->mode_x] = ppu_pixel_to_rgb555(ppu, out);
+    ppu->mode_x++;
 }
+
+static uint16_t ppu_pixel_to_rgb555(const Ppu *ppu, PpuPixel px) {
+    uint8_t color = px.color & 3;
+    uint8_t palette = px.palette & 7;
+
+    if (!ppu->cgb) {
+        uint8_t reg;
+        if (px.is_obj) {
+        palette &= 1;
+        reg = palette ? ppu->bus->obp1 : ppu->bus->obp0;
+        } else {
+            palette = 0;
+            reg = ppu->bus->bgp;
+        }
+        color = (reg >> (color * 2)) & 3;
+    }
+
+    const uint8_t *ram = px.is_obj ? ppu->obj_palettes : ppu->bgw_palettes;
+    uint8_t offset = (uint8_t)(palette * 8 + color * 2);
+
+    return (uint16_t)((ram[offset] | (ram[offset + 1] << 8)) & 0x7FFF);
+}
+
+static void ppu_bgw_refill(Ppu *ppu) {
+    uint8_t tx, ty, row;
+
+    if (ppu->window_active) {
+        tx = ppu->bg_tx & 0x1F;
+        ty = ppu->window_line >> 3;
+        row = ppu->window_line & 7;
+    } else {
+        uint8_t y = (uint8_t)(ppu->bus->scy + ppu->bus->ly);
+        tx = (uint8_t)(((ppu->bus->scx >> 3) + ppu->bg_tx) & 0x1F);
+        ty = y >> 3;
+        row = y & 7;
+    }
+    ppu->bg_tx++;
+
+    uint16_t map = ppu_tile_map_base_address(ppu) + ty * 32u + tx;
+    uint8_t tile = ppu_vram_read(ppu, 0, map);
+    uint8_t attr = ppu->cgb ? ppu_vram_read(ppu, 1, map) : 0;
+    uint8_t bank = ppu->cgb ? BIT(attr, PPU_TILEDATA_ATTR_BANK_BIT) : 0;
+
+    if (BIT(attr, PPU_TILEDATA_ATTR_Y_FLIP_BIT)) row = 7 - row;
+
+    uint16_t address = ppu_tile_data_address(ppu, tile, row);
+    uint8_t low = ppu_vram_read(ppu, bank, address);
+    uint8_t high = ppu_vram_read(ppu, bank, address + 1);
+
+    bool flip_x = BIT(attr, PPU_TILEDATA_ATTR_X_FLIP_BIT);
+    for (uint8_t x = 0; x < PPU_PX_PER_FETCH; x++) {
+        ppu_fifo_push(&ppu->bgw_fifo, (PpuPixel) {
+            .color = ppu_row_pixel(low, high, x, flip_x),
+            .palette = attr & PPU_TILEDATA_ATTR_PALETTE_MASK,
+            .priority = BIT(attr, PPU_TILEDATA_ATTR_PRI_BIT)
+        });
+    }
+}
+
+static void ppu_obj_refill(Ppu *ppu, const PpuObj *o) {
+    ppu->obj_next++;
+    ppu->stall = 6;
+
+    const uint8_t height = BIT(ppu->bus->lcdc, PPU_LCDC_OBJ_SIZE_BIT) ? 16 : 8;
+    uint8_t row = (uint8_t)(ppu->bus->ly + 16 - o->y);
+    if (BIT(o->attr, PPU_TILEDATA_ATTR_Y_FLIP_BIT)) row = height - 1 - row;
+
+    uint8_t tile = o->tile;
+    if (height == 16) tile = (tile & 0xFE) | (row >> 3);
+
+    uint16_t address = PPU_ADDR_VRAM_TILEDATA1_BASE + tile * PPU_BYTES_PER_TILE + (row & 7) * 2;
+    uint8_t bank = ppu->cgb ? BIT(o->attr, PPU_TILEDATA_ATTR_BANK_BIT) : 0;
+    uint8_t low = ppu_vram_read(ppu, bank, address);
+    uint8_t high = ppu_vram_read(ppu, bank, address + 1);
+
+    bool flip_x = BIT(o->attr, PPU_TILEDATA_ATTR_X_FLIP_BIT);
+    uint8_t palette = ppu->cgb ? (o->attr & PPU_TILEDATA_ATTR_PALETTE_MASK) : BIT(o->attr, PPU_TILEDATA_ATTR_DMG_PALETTE_BIT);
+
+    int left = (int)o->x - PPU_OBJ_OFFSET_X;
+    for (int i = 0; i < 8; i++) {
+        int px = left + i;
+        if (px < 0 || px >= LCD_XRES) continue;
+
+        uint8_t color = ppu_row_pixel(low, high, i, flip_x);
+        if (color == 0) continue;
+
+        PpuPixel *slot = &ppu->obj_line[px];
+        if (slot->color == 0 || (ppu->obj_order && o->oam_index < slot->oam_index)) {
+            *slot = (PpuPixel) {
+                .color = color,
+                .palette = palette,
+                .priority = BIT(o->attr, PPU_TILEDATA_ATTR_PRI_BIT),
+                .is_obj = true,
+                .oam_index = o->oam_index
+            };
+        }
+    }
+}
+
+static PpuObj *ppu_obj_next_due(Ppu *ppu) {
+    if (!BIT(ppu->bus->lcdc, PPU_LCDC_OBJ_ENABLE_BIT) || ppu->obj_next >= ppu->obj_count) return NULL;
+    PpuObj *obj = &ppu->obj_buffer[ppu->obj_next];
+    return ((int)obj->x - 8 <= (int)ppu->mode_x) ? obj : NULL;
+}
+
+static PpuPixel ppu_resolve(const Ppu *ppu, PpuPixel bg, PpuPixel obj) {
+    bool bgw_en = BIT(ppu->bus->lcdc, PPU_LCDC_BGW_ENABLE_BIT);
+
+    if (!ppu->cgb) {
+        if (!bgw_en) bg.color = 0;
+        if (obj.color == 0) return bg;
+        return (obj.priority && bg.color) ? bg : obj;
+    }
+
+    if (obj.color == 0) return bg;
+    if (!bgw_en) return obj;
+    return (bg.color && (obj.priority || bg.priority)) ? bg : obj;
+}
+
+static inline uint16_t ppu_tile_map_base_address(const Ppu *ppu) {
+    return BIT(ppu->bus->lcdc, ppu->window_active ? PPU_LCDC_WINDOW_TILEMAP_AREA_BIT : PPU_LCDC_BG_TILEMAP_AREA_BIT) 
+        ? PPU_ADDR_VRAM_TILEMAP1_BASE : PPU_ADDR_VRAM_TILEMAP0_BASE;
+}
+
+static inline uint16_t ppu_tile_data_address(const Ppu *ppu, uint8_t tile, uint8_t row) {
+    int index = BIT(ppu->bus->lcdc, PPU_LCDC_BGW_TILEDATA_AREA_BIT) ? tile : (int8_t)tile;
+    int base = BIT(ppu->bus->lcdc, PPU_LCDC_BGW_TILEDATA_AREA_BIT) ? PPU_ADDR_VRAM_TILEDATA1_BASE : PPU_ADDR_VRAM_TILEDATA0_BASE;
+    return (uint16_t)(base + index * (int)PPU_BYTES_PER_TILE + row * 2);
+}
+
+static inline uint8_t ppu_row_pixel(uint8_t low, uint8_t high, uint8_t x, bool flip) {
+    uint8_t bit = flip ? x : 7 - x;
+    return (uint8_t)((BIT(high, bit) << 1) | BIT(low, bit));
+}
+

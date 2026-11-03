@@ -3,25 +3,28 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../common.h"
 
-#define PPU_FIFO_FETCHER_CAPACITY 16u
+#define FIFO_CAPACITY 16u
 
-typedef struct {
+typedef struct PpuPixel {
     uint8_t color;
     uint8_t palette;
-    uint8_t priority;
-} ppu_pixel_t;
+    bool priority;
+    bool is_obj;
+    uint8_t oam_index; // OBJ only
+} PpuPixel;
 
-typedef struct {
-    ppu_pixel_t pixels[PPU_FIFO_FETCHER_CAPACITY];
+typedef struct PpuFifo {
+    PpuPixel pixels[FIFO_CAPACITY];
     uint8_t head;
     uint8_t count;
-} ppu_fifo_t;
+} PpuFifo;
 
-void ppu_fifo_clear(ppu_fifo_t* fifo);
-bool ppu_fifo_push(ppu_fifo_t* fifo, ppu_pixel_t pixel);
-bool ppu_fifo_pop(ppu_fifo_t* fifo, ppu_pixel_t* pixel);
-bool ppu_fifo_empty(const ppu_fifo_t*);
-uint8_t ppu_fifo_count(const ppu_fifo_t* fifo);
+void ppu_fifo_clear(PpuFifo *fifo);
+bool ppu_fifo_push(PpuFifo *fifo, PpuPixel px);
+bool ppu_fifo_pop(PpuFifo *fifo, PpuPixel *px);
+uint8_t ppu_fifo_count(const PpuFifo *fifo);
+bool ppu_fifo_empty(const PpuFifo *fifo);
 
 #endif
