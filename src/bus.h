@@ -154,6 +154,7 @@ typedef struct {
     uint8_t bgpd; /* $FF69 */ // Background palette data
     uint8_t obpi; /* $FF6A */ // Object palette index
     uint8_t obpd; /* $FF6B */ // Object palette data
+    uint8_t opri; /* $FF6C */ // Object priority mode
     uint8_t svbk; /* $FF70 */ // WRAM bank select: Selects bank 1-7 mapped at D000-DFFF. Writing 0 will select bank 1.
     /* Interrupt enable register */
     uint8_t interrupt_enable; /* $FFFF */

@@ -108,6 +108,7 @@ void bus_init(Bus* bus, Cartridge* cartridge, Ppu* ppu, GbSystemType system) {
         .wy = 0x00,
         .wx = 0x00,
         .key0 = 0x04, // temporary until I can pass around support mode (cgb flag is probably the easiest way)
+        .opri = 0x01, // temporary while I test DMG-mode
         .interrupt_enable = 0x00
     };
     bus->cartridge = cartridge;
@@ -251,6 +252,7 @@ static uint8_t io_read(Bus *bus, BusCaller caller, uint16_t address) {
     case IO_ADDR_BGPD: return ppu_palette_read(bus->ppu, false);
     case IO_ADDR_OBPI: return bus->obpi;
     case IO_ADDR_OBPD: return ppu_palette_read(bus->ppu, true);
+    case IO_ADDR_OPRI: return 0xFF;
     case IO_ADDR_SVBK: return bus->svbk;
     case IO_ADDR_IE: return bus->interrupt_enable;
     default: return 0xFF;
@@ -316,6 +318,7 @@ static void io_write(Bus* bus, BusCaller caller, uint16_t address, uint8_t value
     case IO_ADDR_BGPD: ppu_palette_write(bus->ppu, false, value); break;
     case IO_ADDR_OBPI: bus->obpi = value; break;
     case IO_ADDR_OBPD: ppu_palette_write(bus->ppu, true, value); break;
+    case IO_ADDR_OPRI: break;
     case IO_ADDR_SVBK: bus->svbk = value; break;
     case IO_ADDR_IE: bus->interrupt_enable = value; break;
     default: break;
