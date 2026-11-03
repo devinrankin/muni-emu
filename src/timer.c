@@ -1,77 +1,43 @@
 #include "timer.h"
 
-static inline bool check_falling_edge(uint16_t previous, uint16_t current, uint8_t bit);
+#define IO_TIMER_TAC_ENABLE_BIT 3u
+#define IO_TIMER_TAC_SELECT(tac) ((tac) & 0x03u)
 
-void timer_init(gbc_timer_t *timer) {
-    *timer = (gbc_timer_t){0};
+#define IO_TIMER_TAC_SELECT_BIT_4096HZ 9u
+#define IO_TIMER_TAC_SELECT_BIT_262144HZ 3u
+#define IO_TIMER_TAC_SELECT_BIT_65536HZ 5u
+#define IO_TIMER_TAC_SELECT_BIT_16384HZ 7u
+
+static const uint8_t TIMER_BITS[4] = { 9, 3, 5, 7 };
+
+static bool timer_signal(const Bus *bus);
+static void timer_increment(Bus *bus);
+
+void timer_tick(Bus *bus) {
+    bool before = timer_signal(bus);
+    bus->div++;
+    if (before && !timer_signal(bus)) timer_increment(bus);
 }
 
-void timer_tick(gbc_timer_t* timer) {
-    uint16_t prev_div = timer->div;
-    timer->div++;
-
-    bool timer_updated = false;
-    switch (TAC_CLOCK_SELECT(timer->tac)) {
-        case 0x00:
-            timer_updated = check_falling_edge(prev_div, timer->div, TIMER_TAC_SELECT_4096HZ);
-            break;
-        case 0x01:
-            timer_updated = check_falling_edge(prev_div, timer->div, TIMER_TAC_SELECT_262144HZ);
-            break;
-        case 0x02: 
-            timer_updated = check_falling_edge(prev_div, timer->div, TIMER_TAC_SELECT_65536HZ);
-            break;
-        case 0x03:
-            timer_updated = check_falling_edge(prev_div, timer->div, TIMER_TAC_SELECT_16384HZ);
-            break;
-    }
-
-    if (timer_updated && TAC_TIMER_ENABLED(timer->tac)) {
-        timer->tima++; 
-    }
-    
-    /* TODO: interrupt */
-    if(timer->tima == 0xFF) {
-        timer->tima = timer->tma;
-        timer->timer_interrupt = true;
-    }
+void timer_write_div(Bus *bus) {
+    bool before = timer_signal(bus);
+    bus->div = 0;
+    if (before) timer_increment(bus);
 }
 
-uint8_t timer_read(gbc_timer_t* timer, uint16_t address) {
-    switch (address) {
-        case TIMER_REG_DIV:
-            return timer->div;
-        case TIMER_REG_TIMA:
-            return timer->tima;
-        case TIMER_REG_TMA:
-            return timer->tma;
-        case TIMER_REG_TAC:
-            return timer->tac;
-        default:
-            return 0xFF;
-    }
+void timer_write_tac(Bus *bus, uint8_t value) {
+    bool before = timer_signal(bus);
+    bus->tac = value & 7;
+    if (before && !timer_signal(bus)) timer_increment(bus);
 }
 
-void timer_write(gbc_timer_t* timer, uint16_t address, uint8_t value) {
-    switch (address) {
-        case TIMER_REG_DIV:
-            timer->div = 0;
-        case TIMER_REG_TIMA:
-            timer->tima = value;
-            break;
-        case TIMER_REG_TMA:
-            timer->tma = value;
-            break;
-        case TIMER_REG_TAC:
-            timer->tac = value;
-            break;
-        default:
-            return;
-    }
+static bool timer_signal(const Bus *bus) {
+    return BIT(bus->tac, 2) && BIT(bus->div, TIMER_BITS[bus->tac & 3]);
 }
 
-static inline bool check_falling_edge(uint16_t previous, uint16_t current, uint8_t bit) {
-    uint16_t mask = (uint16_t)(1 << bit);
-
-    return (previous & mask) != 0 && (current & mask) == 0;
+static void timer_increment(Bus *bus) {
+    if (++bus->tima == 0) {
+        bus->tima = bus->tma;
+        bus_request_interrupt(bus, INTERRUPT_BIT_TIMER);
+    }
 }
