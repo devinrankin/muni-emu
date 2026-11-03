@@ -41,6 +41,9 @@
 #define ADDR_WRAMX_BASE 0xD000
 #define ADDR_WRAMX_SIZE 0x1000
 
+#define ADDR_WRAM_BASE 0xC000
+#define ADDR_WRAM_SIZE 0x2000
+
 /* Echo RAM (mirror of C000 - DDFF) */
 #define ADDR_ERAM_BASE 0xE000
 #define ADDR_ERAM_SIZE 0x1E00

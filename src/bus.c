@@ -92,7 +92,7 @@ void bus_init(Bus* bus, Cartridge* cartridge, Ppu* ppu, GbSystemType system) {
     *bus = (Bus) {
         .p1 = 0xCF,
         .sc = 0x7E,
-        .div = 0xAB,
+        .div = 0x00,
         .tima = 0x00,
         .tma = 0x00,
         .tac = 0xF8,
@@ -117,7 +117,7 @@ void bus_init(Bus* bus, Cartridge* cartridge, Ppu* ppu, GbSystemType system) {
 
 /* Returns a byte from a pre-defined block of memory pointed to by the specified address. */
 uint8_t bus_read(Bus* bus, BusCaller caller, uint16_t address) {
-    if (IN_RANGE(address, ADDR_ROM0_BASE, ADDR_ROMX_SIZE) || IN_RANGE(address, ADDR_EXRAM_BASE, ADDR_EXRAM_SIZE)) {
+    if (IN_RANGE(address, ADDR_ROM0_BASE, ADDR_ROMX_BASE + ADDR_ROMX_SIZE) || IN_RANGE(address, ADDR_EXRAM_BASE, ADDR_EXRAM_SIZE)) {
         return cartridge_read(bus->cartridge, address);
     }
 
@@ -125,7 +125,7 @@ uint8_t bus_read(Bus* bus, BusCaller caller, uint16_t address) {
         return vram_read(bus, caller, address);
     }
 
-    if (IN_RANGE(address, ADDR_WRAM0_BASE, ADDR_WRAMX_SIZE)) {
+    if (IN_RANGE(address, ADDR_WRAM0_BASE, ADDR_WRAM0_SIZE + ADDR_WRAMX_SIZE)) {
         return wram_read(bus, address);
     }
 
@@ -155,7 +155,7 @@ uint8_t bus_read(Bus* bus, BusCaller caller, uint16_t address) {
 /* Attempts to write a byte to a pre-defined block of memory pointed to by the specified address. */
 void bus_write(Bus* bus, BusCaller caller, uint16_t address, uint8_t value) {
     // if (address == 0xCFA7) fprintf(stderr, "[$CFA7] write val=%0.2X\n", value);
-    if (IN_RANGE(address, ADDR_ROM0_BASE, ADDR_ROMX_SIZE) || IN_RANGE(address, ADDR_EXRAM_BASE, ADDR_EXRAM_SIZE)) {
+    if (IN_RANGE(address, ADDR_ROM0_BASE, ADDR_ROMX_BASE + ADDR_ROMX_SIZE) || IN_RANGE(address, ADDR_EXRAM_BASE, ADDR_EXRAM_SIZE)) {
         cartridge_write(bus->cartridge, address, value);
         return;
     }
@@ -165,7 +165,7 @@ void bus_write(Bus* bus, BusCaller caller, uint16_t address, uint8_t value) {
         return;
     }
 
-    if (IN_RANGE(address, ADDR_WRAM0_BASE, ADDR_WRAMX_SIZE)) {
+    if (IN_RANGE(address, ADDR_WRAM0_BASE, ADDR_WRAM0_SIZE + ADDR_WRAMX_SIZE)) {
         wram_write(bus, address, value);
         return;
     }
@@ -219,15 +219,15 @@ void bus_hdma_hblank(Bus *bus) {
 static uint8_t io_read(Bus *bus, BusCaller caller, uint16_t address) {
     (void)caller;
     switch (address) {
-    case IO_ADDR_JOYP: return bus->p1;
+    case IO_ADDR_JOYP: return bus->p1 | 0xCF;
     case IO_ADDR_DIV: return (uint8_t)(bus->div >> 8);
     case IO_ADDR_TIMA: return bus->tima;
     case IO_ADDR_TMA: return bus->tma;
-    case IO_ADDR_TAC: return bus->tac;
-    case IO_ADDR_IF: return bus->interrupt_flags;
+    case IO_ADDR_TAC: return bus->tac | 0xF8;
+    case IO_ADDR_IF: return bus->interrupt_flags | 0xE0;
     case IO_ADDR_NR10 ... IO_ADDR_WAVERAMF: return 0xFF;
     case IO_ADDR_LCDC: return bus->lcdc;
-    case IO_ADDR_STAT: return bus->stat;
+    case IO_ADDR_STAT: return bus->stat | 0x80;
     case IO_ADDR_SCY: return bus->scy;
     case IO_ADDR_SCX: return bus->scx;
     case IO_ADDR_LY: return bus->ly;
@@ -239,18 +239,18 @@ static uint8_t io_read(Bus *bus, BusCaller caller, uint16_t address) {
     case IO_ADDR_WY: return bus->wy;
     case IO_ADDR_KEY0: return bus->key0;
     case IO_ADDR_KEY1: return bus->key1;
-    case IO_ADDR_VBK: return bus->vbk;
+    case IO_ADDR_VBK: return (bus->vbk & 1) | 0xFE;
     case IO_ADDR_HDMA1: return 0xFF;
     case IO_ADDR_HDMA2: return 0xFF; 
     case IO_ADDR_HDMA3: return 0xFF; 
     case IO_ADDR_HDMA4: return 0xFF; 
     case IO_ADDR_HDMA5: return bus->hdma_active ? (bus->hdma_len & 0x7F) : 0xFF;
     case IO_ADDR_RP: return bus->rp;
-    case IO_ADDR_BGPI: return bus->bgpi;
+    case IO_ADDR_BGPI: return bus->bgpi | 0x40;
     case IO_ADDR_BGPD: return ppu_palette_read(bus->ppu, false);
-    case IO_ADDR_OBPI: return bus->obpi;
+    case IO_ADDR_OBPI: return bus->obpi | 0x40;
     case IO_ADDR_OBPD: return ppu_palette_read(bus->ppu, true);
-    case IO_ADDR_OPRI: return 0xFF;
+    case IO_ADDR_OPRI: return bus->opri | 0xFE;
     case IO_ADDR_SVBK: return bus->svbk;
     case IO_ADDR_IE: return bus->interrupt_enable;
     default: return 0xFF;
@@ -300,14 +300,14 @@ static void io_write(Bus* bus, BusCaller caller, uint16_t address, uint8_t value
             break;
         }
         bus->hdma_len = value & 0x7F;
+        bus->hdma_src = ((uint16_t)bus->hdma1 << 8) | (bus->hdma2 & 0xF0);
+        bus->hdma_dst = 0x8000 | (((uint16_t)bus->hdma3 & 0x1F) << 8) | (bus->hdma4 & 0xF0);
         if (BIT(value, 7)) {
             bus->hdma_active = true;
             bus->hdma_hblank = true;
         } else {
-            bus->hdma_src = ((uint16_t)bus->hdma1 << 8) | (bus->hdma2 & 0xF0);
-            bus->hdma_dst = 0x8000 | (((uint16_t)bus->hdma3 & 0x1F) << 8) | (bus->hdma4 & 0xF0);
             int blocks = (value & 0x7F) + 1;
-            for (int i = 0; i <= blocks; i++) hdma_copy_block(bus);
+            for (int i = 0; i < blocks; i++) hdma_copy_block(bus);
             bus->hdma_len = 0x7F;
         }
         break;
@@ -316,7 +316,7 @@ static void io_write(Bus* bus, BusCaller caller, uint16_t address, uint8_t value
     case IO_ADDR_BGPD: ppu_palette_write(bus->ppu, false, value); break;
     case IO_ADDR_OBPI: bus->obpi = value; break;
     case IO_ADDR_OBPD: ppu_palette_write(bus->ppu, true, value); break;
-    case IO_ADDR_OPRI: break;
+    case IO_ADDR_OPRI: bus->opri = value; break;
     case IO_ADDR_SVBK: bus->svbk = value; break;
     case IO_ADDR_IE: bus->interrupt_enable = value; break;
     default: break;

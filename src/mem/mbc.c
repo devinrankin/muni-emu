@@ -3,30 +3,22 @@
 #include "../common.h"
 
 
-#define ADDR_ROM_BASE 0x0000
-#define ADDR_ROM_SIZE 0x8000
+#define ADDR_ROM0_BASE 0x0000
+#define ADDR_ROM0_SIZE 0x4000
+#define ADDR_ROMX_BASE 0x4000
+#define ADDR_ROMX_SIZE 0x4000
+#define ROM_BANK_SIZE 0x4000
+
 #define ADDR_RAM_BASE 0xA000
 #define ADDR_RAM_SIZE 0x2000
 
 #define ADDR_ROM_BANK_BASE 0x4000
-#define ADDR_ROM_BANK_SIZE 0x8000
+#define ADDR_ROM_BANK_SIZE 0x4000
 
 #define ADDR_RAM_MBC2_SIZE 0x0200
 
-#define ADDR_MBC1_RAM_ENABLE_BASE 0x0000
-#define ADDR_MBC1_ROM_BANKNUM_BASE 0x2000
-#define ADDR_MBC1_RAM_BANKNUM_BASE 0x4000
-#define ADDR_MBC1_BANKMODE_SELECT_BASE 0x6000
 #define ADDR_MBC1_REGISTER_SIZE 0x2000
-
-#define ADDR_MBC2_RAM_ENABLE_BASE 0x0000
 #define ADDR_MBC2_REGISTER_SIZE 0x4000
-
-#define ADDR_MBC3_RTC_REG_SELECT_BASE 0xA000
-#define ADDR_MBC3_RAM_TIM_ENABLE_BASE 0x0000
-#define ADDR_MBC3_ROM_BANKNUM_BASE 0x2000
-#define ADDR_MBC3_RAM_BANKNUM_BASE 0x4000
-#define ADDR_MBC3_LATCH_CLOCKDATA_BASE 0x6000
 #define ADDR_MBC3_REGISTER_SIZE 0x2000
 
 static uint8_t mbc0_read(Mbc *mbc, uint16_t address);
@@ -65,6 +57,12 @@ void mbc_init(Mbc *mbc, MbcType type, const uint8_t *rom, size_t rom_size, uint8
         .ram = ram,
         .ram_size = ram_size
     };
+
+    size_t rom_banks = rom_size / ROM_BANK_SIZE;
+    mbc->rom_bank_mask = rom_banks ? rom_banks - 1 : 0;
+
+    size_t ram_banks = ram_size / ADDR_RAM_SIZE;
+    mbc->ram_bank_mask = ram_banks ? ram_banks - 1 : 0;
 
     switch(type) {
     case MBC_TYPE_NONE:
@@ -124,7 +122,7 @@ void mbc_write(Mbc *mbc, uint16_t address, uint8_t value) {
 }
 
 static uint8_t mbc0_read(Mbc *mbc, uint16_t address) {
-    if (IN_RANGE(address, ADDR_ROM_BASE, ADDR_ROM_SIZE)) return rom_read(mbc, address);
+    if (IN_RANGE(address, ADDR_ROM0_BASE, ADDR_ROM0_SIZE + ADDR_ROMX_SIZE)) return rom_read(mbc, address);
     if (IN_RANGE(address, ADDR_RAM_BASE, ADDR_RAM_SIZE)) return ram_read(mbc, address - ADDR_RAM_BASE);
     return 0xFF;
 }
@@ -141,7 +139,7 @@ static uint8_t mbc1_read(Mbc *mbc, uint16_t address) {
     size_t bank;
     size_t offset;
 
-    if (IN_RANGE(address, ADDR_ROM_BASE, ADDR_ROM_BANK_SIZE)) {
+    if (IN_RANGE(address, ADDR_ROM0_BASE, ADDR_ROM0_SIZE)) {
         if (state->banking_mode == 0) bank = 0;
         else bank = (size_t)(state->bank_high & 0x03) << 5;
 
@@ -149,9 +147,10 @@ static uint8_t mbc1_read(Mbc *mbc, uint16_t address) {
         return rom_read(mbc, offset);
     }
 
-    if (IN_RANGE(address, ADDR_ROM_BANK_BASE, ADDR_ROM_BANK_SIZE)) {
-        bank = ((size_t)(state->bank_high & 0x03) << 5) | (state->rom_bank_low & 0x1F);
-        if ((bank & 0x1F) == 0) bank = 1;
+    if (IN_RANGE(address, ADDR_ROMX_BASE, ADDR_ROMX_SIZE)) {
+        size_t low = state->rom_bank_low & 0x1F;
+        if (low == 0) low = 1;
+        bank = ((size_t)(state->bank_high & 0x03) << 5) | low;
 
         offset = bank * ADDR_ROM_BANK_SIZE + (address - ADDR_ROM_BANK_SIZE);
         return rom_read(mbc, offset);
@@ -171,10 +170,10 @@ static uint8_t mbc1_read(Mbc *mbc, uint16_t address) {
 static void mbc1_write(Mbc *mbc, uint16_t address, uint8_t value) {
     Mbc1State *state = &mbc->state.mbc1;
     
-    if (IN_RANGE(address, ADDR_MBC1_RAM_ENABLE_BASE, ADDR_MBC1_REGISTER_SIZE)) { state->ram_enabled = ((value & 0x0F) == 0x0A); return; }
-    if (IN_RANGE(address, ADDR_MBC1_ROM_BANKNUM_BASE, ADDR_MBC1_REGISTER_SIZE)) { state->rom_bank_low = (value & 0x1F); return; }
-    if (IN_RANGE(address, ADDR_MBC1_RAM_BANKNUM_BASE, ADDR_MBC1_REGISTER_SIZE)) { state->bank_high = value & 0x03; return; }
-    if (IN_RANGE(address, ADDR_MBC1_BANKMODE_SELECT_BASE, ADDR_MBC1_REGISTER_SIZE)) { state->banking_mode = value & 0x01; return; }
+    if (IN_RANGE(address, 0x0000, ADDR_MBC1_REGISTER_SIZE)) { state->ram_enabled = ((value & 0x0F) == 0x0A); return; }
+    if (IN_RANGE(address, 0x2000, ADDR_MBC1_REGISTER_SIZE)) { state->rom_bank_low = (value & 0x1F); return; }
+    if (IN_RANGE(address, 0x4000, ADDR_MBC1_REGISTER_SIZE)) { state->bank_high = value & 0x03; return; }
+    if (IN_RANGE(address, 0x6000, ADDR_MBC1_REGISTER_SIZE)) { state->banking_mode = value & 0x01; return; }
     if (IN_RANGE(address, ADDR_RAM_BASE, ADDR_RAM_SIZE)) {
         if(!state->ram_enabled) return;
         size_t bank = 0;
@@ -192,16 +191,16 @@ static uint8_t mbc2_read(Mbc *mbc, uint16_t address) {
     size_t bank;
     size_t offset;
 
-    if (IN_RANGE(address, ADDR_ROM_BASE, ADDR_ROM_BANK_SIZE)) {
+    if (IN_RANGE(address, ADDR_ROM0_BASE, ADDR_ROM0_SIZE)) {
         offset = address;
         return rom_read(mbc, offset);
     }
 
-    if (IN_RANGE(address, ADDR_ROM_BANK_BASE, ADDR_ROM_BANK_SIZE)) {
+    if (IN_RANGE(address, ADDR_ROMX_BASE, ADDR_ROMX_SIZE)) {
         bank = state->rom_bank & 0x0F;
         if(bank == 0) bank = 1;
 
-        offset = bank * ADDR_ROM_BANK_SIZE + (address - 0x4000);
+        offset = bank * ROM_BANK_SIZE + (address - ADDR_ROMX_BASE);
         return rom_read(mbc, offset);
     }
 
@@ -217,7 +216,7 @@ static uint8_t mbc2_read(Mbc *mbc, uint16_t address) {
 static void mbc2_write(Mbc *mbc, uint16_t address, uint8_t value) {
     Mbc2State *state = &mbc->state.mbc2;
 
-    if (IN_RANGE(address, ADDR_MBC2_RAM_ENABLE_BASE, ADDR_MBC2_REGISTER_SIZE)) {
+    if (IN_RANGE(address, 0x0000, ADDR_MBC2_REGISTER_SIZE)) {
         /* Masking the least significant bit of the upper address byte */
         if ((address & 0x0100) == 0) state->ram_enabled = ((value & 0x0F) == 0x0A); // Ram is enabled if and only if the lower 4 bits of value are $A
         else state->rom_bank = value & 0x0F;
@@ -237,15 +236,15 @@ static uint8_t mbc3_read(Mbc *mbc, uint16_t address) {
     size_t bank;
     size_t offset;
 
-    if (IN_RANGE(address, ADDR_ROM_BASE, ADDR_ROM_BANK_SIZE)) {
+    if (IN_RANGE(address, ADDR_ROM0_BASE, ADDR_ROM0_SIZE)) {
         return rom_read(mbc, address);
     }
 
-    if (IN_RANGE(address, ADDR_ROM_BANK_BASE, ADDR_ROM_BANK_SIZE)) {
+    if (IN_RANGE(address, ADDR_ROMX_BASE, ADDR_ROMX_SIZE)) {
         bank = state->rom_bank & 0x7F;
         if(bank == 0) bank = 1;
 
-        offset = bank * ADDR_ROM_BANK_SIZE + (address - ADDR_ROM_BANK_SIZE);
+        offset = bank * ROM_BANK_SIZE + (address - ADDR_ROMX_BASE);
         return rom_read(mbc, offset);
     }
 
@@ -274,10 +273,10 @@ static uint8_t mbc3_read(Mbc *mbc, uint16_t address) {
 static void mbc3_write(Mbc *mbc, uint16_t address, uint8_t value) {
     Mbc3State *state = &mbc->state.mbc3;
     
-    if (IN_RANGE(address, ADDR_MBC3_RAM_TIM_ENABLE_BASE, ADDR_MBC3_REGISTER_SIZE)) { state->ram_enabled = ((value & 0x0F) == 0x0A); return; }
-    if (IN_RANGE(address, ADDR_MBC3_ROM_BANKNUM_BASE, ADDR_MBC3_REGISTER_SIZE)) { state->rom_bank = value & 0x7F; return; }
-    if (IN_RANGE(address, ADDR_MBC3_RTC_REG_SELECT_BASE, ADDR_MBC3_REGISTER_SIZE)) { state->ram_rtc_select = value; return; }
-    if (IN_RANGE(address, ADDR_MBC3_LATCH_CLOCKDATA_BASE, ADDR_MBC3_REGISTER_SIZE)) { /* TODO: implement RTC latch */ return; }
+    if (IN_RANGE(address, 0x0000, ADDR_MBC3_REGISTER_SIZE)) { state->ram_enabled = ((value & 0x0F) == 0x0A); return; }
+    if (IN_RANGE(address, 0x2000, ADDR_MBC3_REGISTER_SIZE)) { state->rom_bank = value & 0x7F; return; }
+    if (IN_RANGE(address, 0x4000, ADDR_MBC3_REGISTER_SIZE)) { state->ram_rtc_select = value; return; }
+    if (IN_RANGE(address, 0x6000, ADDR_MBC3_REGISTER_SIZE)) { /* TODO: implement RTC latch */ return; }
     if (IN_RANGE(address, ADDR_RAM_BASE, ADDR_RAM_SIZE)) {
         if(!state->ram_enabled) return;
         switch(state->ram_rtc_select) {

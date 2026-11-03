@@ -67,8 +67,10 @@ struct Mbc {
 
     const uint8_t *rom;
     size_t rom_size;
+    size_t rom_bank_mask;
     uint8_t *ram;
     size_t ram_size;
+    size_t ram_bank_mask;
 
     uint8_t (*read)(Mbc *mbc, uint16_t address);
     void (*write)(Mbc *mbc, uint16_t address, uint8_t value);
