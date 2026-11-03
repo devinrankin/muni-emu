@@ -122,9 +122,7 @@ uint8_t bus_read(Bus* bus, BusCaller caller, uint16_t address) {
     }
 
     if (IN_RANGE(address, ADDR_VRAM_BASE, ADDR_VRAM_SIZE)) {
-        uint8_t value = vram_read(bus, caller, address);
-
-        return value; 
+        return vram_read(bus, caller, address);
     }
 
     if (IN_RANGE(address, ADDR_WRAM0_BASE, ADDR_WRAMX_SIZE)) {

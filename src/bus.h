@@ -114,50 +114,50 @@ typedef struct {
     int8_t hdma_len;
 
 /* IO registers */
-    uint8_t p1; /* $FF00 */ // Joypad state
-    uint8_t sb; /* $FF01 */ // Serial transfer data
-    uint8_t sc; /* $FF02 */ // Serial transfer control
+    uint8_t p1;                     /* $FF00 */ // Joypad state
+    uint8_t sb;                     /* $FF01 */ // Serial transfer data
+    uint8_t sc;                     /* $FF02 */ // Serial transfer control
     /* Timer registers */
-    uint16_t div; /* $FF03 */ // Note: The timer is actually an unsigned 16-bit integer, but the register only uses the lower 8-bits.
-    uint8_t tima; /* $FF04 */
-    uint8_t tma; /* $FF05 */
-    uint8_t tac; /* $FF06 */
+    uint16_t div;                   /* $FF03 */ // Note: The timer is actually an unsigned 16-bit integer, but the register only uses the lower 8-bits.
+    uint8_t tima;                   /* $FF04 */
+    uint8_t tma;                    /* $FF05 */
+    uint8_t tac;                    /* $FF06 */
     /* Interrupt flags register */
-    uint8_t interrupt_flags; /* $FF0F */
+    uint8_t interrupt_flags;        /* $FF0F */
     /* Audio registers */
-    uint8_t nr[IO_NR_COUNT]; /* $FF10 - $FF26 */
+    uint8_t nr[IO_NR_COUNT];        /* $FF10 - $FF26 */
     uint8_t wavram[IO_WAVRAM_SIZE]; /* $FF30 - $FF3F */
     /* LCD registers */
-    uint8_t lcdc; /* $FF40 */ // LCD control
-    uint8_t stat; /* $FF41 */ // LCD status
-    uint8_t scy; /* $FF42 */ // Background viewport Y position
-    uint8_t scx; /* $FF43 */ // Background viewport X position
-    uint8_t ly; /* $FF44 */ // LCD Y coordinate
-    uint8_t lyc; /* $FF45 */ // LCD Y coordinate compare
-    uint8_t dma; /* $FF46 */ // OAM DMA transfer
-    uint8_t bgp; /* $FF47 */ // Background palette data
-    uint8_t obp0; /* $FF48 */ // Object palette 0 data 
-    uint8_t obp1; /* $FF49 */ // Object palette 1 data
-    uint8_t wy; /* $FF4A */ // Window Y position
-    uint8_t wx; /* $FF4B */ // Window X position
+    uint8_t lcdc;                   /* $FF40 */ // LCD control
+    uint8_t stat;                   /* $FF41 */ // LCD status
+    uint8_t scy;                    /* $FF42 */ // Background viewport Y position
+    uint8_t scx;                    /* $FF43 */ // Background viewport X position
+    uint8_t ly;                     /* $FF44 */ // LCD Y coordinate
+    uint8_t lyc;                    /* $FF45 */ // LCD Y coordinate compare
+    uint8_t dma;                    /* $FF46 */ // OAM DMA transfer
+    uint8_t bgp;                    /* $FF47 */ // Background palette data
+    uint8_t obp0;                   /* $FF48 */ // Object palette 0 data 
+    uint8_t obp1;                   /* $FF49 */ // Object palette 1 data
+    uint8_t wy;                     /* $FF4A */ // Window Y position
+    uint8_t wx;                     /* $FF4B */ // Window X position
     /* CGB Registers */
-    uint8_t key0; /* $FF4C */ // CGB boot-mode control: boot-ROM use only; sets CGB boot-mode (for DMG compatibility).
-    uint8_t key1; /* $FF4D */ // Speed-switch control: Controls the speed of the system. Bit 7 reports current speed (0 = normal, 1 = double); bit 0 arms a switch to STOP.
-    uint8_t vbk;  /* $FF4F */ // VRAM bank select: Selects bank 0 or 1 mapped at 8000-9FFF.
-    uint8_t hdma1; /* $FF51 */ // VRAM DMA source (high)
-    uint8_t hdma2; /* $FF52 */ // VRAM DMA source (low)
-    uint8_t hdma3; /* $FF53 */ // VRAM DMA destination (high)
-    uint8_t hdma4; /* $FF54 */ // VRAM DMA destination (low)
-    uint8_t hdma5; /* $FF55 */ // VRAM DMA length/mode/start B7:mode (0=General-Purpose, 1=HBlank) B6-0:length. Any write starts the transfer.
-    uint8_t rp; /* $FF56 */ // Infrared communications port
-    uint8_t bgpi; /* $FF68 */ // Background palette index
-    uint8_t bgpd; /* $FF69 */ // Background palette data
-    uint8_t obpi; /* $FF6A */ // Object palette index
-    uint8_t obpd; /* $FF6B */ // Object palette data
-    uint8_t opri; /* $FF6C */ // Object priority mode
-    uint8_t svbk; /* $FF70 */ // WRAM bank select: Selects bank 1-7 mapped at D000-DFFF. Writing 0 will select bank 1.
+    uint8_t key0;                   /* $FF4C */ // CGB boot-mode control: boot-ROM use only; sets CGB boot-mode (for DMG compatibility).
+    uint8_t key1;                   /* $FF4D */ // Speed-switch control: Controls the speed of the system. Bit 7 reports current speed (0 = normal, 1 = double); bit 0 arms a switch to STOP.
+    uint8_t vbk;                    /* $FF4F */ // VRAM bank select: Selects bank 0 or 1 mapped at 8000-9FFF.
+    uint8_t hdma1;                  /* $FF51 */ // VRAM DMA source (high)
+    uint8_t hdma2;                  /* $FF52 */ // VRAM DMA source (low)
+    uint8_t hdma3;                  /* $FF53 */ // VRAM DMA destination (high)
+    uint8_t hdma4;                  /* $FF54 */ // VRAM DMA destination (low)
+    uint8_t hdma5;                  /* $FF55 */ // VRAM DMA length/mode/start B7:mode (0=General-Purpose, 1=HBlank) B6-0:length. Any write starts the transfer.
+    uint8_t rp;                     /* $FF56 */ // Infrared communications port
+    uint8_t bgpi;                   /* $FF68 */ // Background palette index
+    uint8_t bgpd;                   /* $FF69 */ // Background palette data
+    uint8_t obpi;                   /* $FF6A */ // Object palette index
+    uint8_t obpd;                   /* $FF6B */ // Object palette data
+    uint8_t opri;                   /* $FF6C */ // Object priority mode
+    uint8_t svbk;                   /* $FF70 */ // WRAM bank select: Selects bank 1-7 mapped at D000-DFFF. Writing 0 will select bank 1.
     /* Interrupt enable register */
-    uint8_t interrupt_enable; /* $FFFF */
+    uint8_t interrupt_enable;       /* $FFFF */
 } Bus;
 
 void bus_init(Bus* bus, Cartridge* cartridge, Ppu *ppu, GbSystemType system);
