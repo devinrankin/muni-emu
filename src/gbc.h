@@ -8,10 +8,10 @@
 #include "bus.h"
 
 typedef struct Gbc {
-    sm83_t sm83;
-    ppu_t ppu;
-    bus_t bus;
-    cartridge_t cartridge;
+    Sm83 sm83;
+    Ppu ppu;
+    Bus bus;
+    Cartridge cartridge;
 
     GbSystemType system;
 } Gbc;

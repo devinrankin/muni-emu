@@ -17,6 +17,14 @@ bool gbc_init(Gbc *gbc, GbSystemType system, const char* rom_path) {
 void gbc_step(Gbc *gbc) {
     uint32_t mcycles = sm83_step(&gbc->sm83);
 
+    for (uint32_t i = 0; i < mcycles * 4; i++) {
+        timer_tick(&gbc->bus);
+    }
+    
+    for (uint32_t i = 0; i < mcycles; i++) {
+        bus_dma_step(&gbc->bus);
+    }
+
     uint32_t dots = mcycles * BIT(gbc->bus.key1, 7) ? 2 : 4;
     for (uint32_t i = 0; i < dots; i++) {
         ppu_step(&gbc->ppu);
