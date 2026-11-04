@@ -649,7 +649,7 @@ static const Sm83OpcodeDescriptor cb_opcode_table[256] = {
     [0xFF] = { op_set_b3_r8, 2, OP_SET, { OPERAND_BIT, 7 }, { OPERAND_R8, REG_A } }
 };
 
-inline unsigned sm83_opcode_execute(Sm83 *sm83, uint8_t opcode) {
+unsigned sm83_opcode_execute(Sm83 *sm83, uint8_t opcode) {
     return opcode_table[opcode].handler(sm83, opcode);
 }
 
