@@ -116,6 +116,10 @@ typedef struct {
     uint16_t hdma_dst;
     int8_t hdma_len;
 
+    /* Joypad input */
+    uint8_t joyp_pressed;
+    uint8_t joyp_prev_lines;
+
 /* IO registers */
     uint8_t p1;                     /* $FF00 */ // Joypad state
     uint8_t sb;                     /* $FF01 */ // Serial transfer data

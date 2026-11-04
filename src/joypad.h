@@ -2,43 +2,22 @@
 #define JOYPAD_H
 
 #include <stdint.h>
-#include <stdbool.h>
-
-#define JOYPAD_SELECT_DPAD_MASK (1u << 4)
-#define JOYPAD_SELECT_BUTTONS_MASK (1u << 5)
+#include "bus.h"
 
 /* P14 D-pad Selected */
-#define JOYPAD_RIGHT_MASK (1u << 0)
-#define JOYPAD_LEFT_MASK (1u << 1)
-#define JOYPAD_UP_MASK (1u << 2)
-#define JOYPAD_DOWN_MASK (1u << 3)
+#define JOYP_RIGHT 0x10
+#define JOYP_LEFT 0x20
+#define JOYP_UP 0x40
+#define JOYP_DOWN 0x80
 
 /* P15 Buttons Selected */
-#define JOYPAD_A_MASK (1u << 0)
-#define JOYPAD_B_MASK (1u << 1)
-#define JOYPAD_SELECT_MASK (1u << 2)
-#define JOYPAD_START_MASK (1u << 3)
+#define JOYP_A 0x01
+#define JOYP_B 0x02
+#define JOYP_SELECT 0x04
+#define JOYP_START 0x08
 
-#define JOYPAD_BUTTON_COUNT 8
-
-typedef enum {
-    JOYPAD_RIGHT,
-    JOYPAD_LEFT,
-    JOYPAD_UP,
-    JOYPAD_DOWN,
-    JOYPAD_A,
-    JOYPAD_B,
-    JOYPAD_SELECT,
-    JOYPAD_START
-} joypad_button_t;
-
-typedef struct joypad_state {
-    uint8_t select;
-    bool pressed[JOYPAD_BUTTON_COUNT]; 
-} joypad_t;
-
-uint8_t joypad_read(const joypad_t* joypad);
-void joypad_write(joypad_t* joypad, uint8_t value);
-void joypad_set_pressed(joypad_t* joypad, joypad_button_t button, bool pressed);
+void joypad_set(Bus *bus, uint8_t pressed);
+uint8_t joypad_read(const Bus *bus);
+void joypad_write(Bus *bus, uint8_t value);
 
 #endif

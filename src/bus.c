@@ -2,8 +2,9 @@
 #include "ppu/ppu.h"
 #include "mem/cartridge.h"
 #include "timer.h"
+#include "joypad.h"
 
-#define IO_ADDR_JOYP 0xFF00
+#define IO_ADDR_P1 0xFF00
 #define IO_ADDR_SB 0xFF01
 #define IO_ADDR_SC 0xFF02
 #define IO_ADDR_DIV 0xFF04
@@ -90,13 +91,13 @@ void bus_init(Bus* bus, Cartridge* cartridge, Ppu* ppu, GbSystemType system) {
 /* https://gbdev.io/pandocs/Power_Up_Sequence.html#hardware-registers 
  * Currently using CGB boot values. */
     *bus = (Bus) {
-        .p1 = 0xCF,
+        .p1 = 0x30,
         .sc = 0x7E,
         .div = 0x00,
         .tima = 0x00,
         .tma = 0x00,
         .tac = 0xF8,
-        .interrupt_flags = 0xE1,
+        .interrupt_flags = 0x01,
         .lcdc = 0x91,
         .stat = 0x85,
         .scy = 0x00,
@@ -111,6 +112,8 @@ void bus_init(Bus* bus, Cartridge* cartridge, Ppu* ppu, GbSystemType system) {
         .opri = 0x01, // temporary while I test DMG-mode
         .interrupt_enable = 0x00
     };
+    bus->joyp_pressed = 0x00;
+    bus->joyp_prev_lines = 0x0F;
     bus->cartridge = cartridge;
     bus->ppu = ppu;
 }
@@ -219,7 +222,7 @@ void bus_hdma_hblank(Bus *bus) {
 static uint8_t io_read(Bus *bus, BusCaller caller, uint16_t address) {
     (void)caller;
     switch (address) {
-    case IO_ADDR_JOYP: return bus->p1 | 0xCF;
+    case IO_ADDR_P1: return joypad_read(bus);
     case IO_ADDR_DIV: return (uint8_t)(bus->div >> 8);
     case IO_ADDR_TIMA: return bus->tima;
     case IO_ADDR_TMA: return bus->tma;
@@ -238,7 +241,7 @@ static uint8_t io_read(Bus *bus, BusCaller caller, uint16_t address) {
     case IO_ADDR_WX: return bus->wx;
     case IO_ADDR_WY: return bus->wy;
     case IO_ADDR_KEY0: return bus->key0;
-    case IO_ADDR_KEY1: return bus->key1;
+    case IO_ADDR_KEY1: return bus->key1 | 0x7E;
     case IO_ADDR_VBK: return (bus->vbk & 1) | 0xFE;
     case IO_ADDR_HDMA1: return 0xFF;
     case IO_ADDR_HDMA2: return 0xFF; 
@@ -260,14 +263,18 @@ static uint8_t io_read(Bus *bus, BusCaller caller, uint16_t address) {
 static void io_write(Bus* bus, BusCaller caller, uint16_t address, uint8_t value) {
     (void)caller;
     switch(address) {
-    case IO_ADDR_JOYP: bus->p1 = value; break;
+    case IO_ADDR_P1: joypad_write(bus, value); break;
     case IO_ADDR_SB: bus->sb = value; break;
-    case IO_ADDR_SC: bus->sc = value; break;
+    case IO_ADDR_SC: if ((value & 0x81) == 0x81) {
+        fputc(bus->sb, stderr);
+        fflush(stderr);
+        bus->sc &= 0x7F;
+    } break;
     case IO_ADDR_DIV: timer_write_div(bus); break;
     case IO_ADDR_TIMA: bus->tima = value; break;
     case IO_ADDR_TMA: bus->tma = value; break;
     case IO_ADDR_TAC: timer_write_tac(bus, value); break;
-    case IO_ADDR_IF: bus->interrupt_flags = value; break;
+    case IO_ADDR_IF: bus->interrupt_flags = value & 0x1F; break;
     case IO_ADDR_NR10 ... IO_ADDR_WAVERAMF: break;
     case IO_ADDR_LCDC: bus->lcdc = value; break;
     case IO_ADDR_STAT: bus->stat = (bus->stat & 0x07) | (value & 0x78); break;
@@ -288,7 +295,7 @@ static void io_write(Bus* bus, BusCaller caller, uint16_t address, uint8_t value
     case IO_ADDR_WY: bus->wy = value; break;
     case IO_ADDR_WX: bus->wx = value; break;
     case IO_ADDR_KEY0: break;
-    case IO_ADDR_KEY1: bus->key1 = value; break;
+    case IO_ADDR_KEY1: bus->key1 = (bus->key1 & 0x80) | (value & 1); break;
     case IO_ADDR_VBK: bus->vbk = value; break;
     case IO_ADDR_HDMA1: bus->hdma1 = value; break;
     case IO_ADDR_HDMA2: bus->hdma2 = value; break;

@@ -1,48 +1,32 @@
 #include "joypad.h"
 
-uint8_t joypad_read(const joypad_t* joypad) {
-    uint8_t low = 0x0F;
+static uint8_t joypad_lines(const Bus *bus);
+static void joypad_update(Bus *bus);
 
-    bool dpad_selected = !(joypad->select & JOYPAD_SELECT_DPAD_MASK);
-    bool buttons_selected = !(joypad->select & JOYPAD_SELECT_BUTTONS_MASK);
-
-    if (dpad_selected) {
-        if (joypad->pressed[JOYPAD_RIGHT]) {
-            low &= ~JOYPAD_RIGHT_MASK;
-        }
-        if (joypad->pressed[JOYPAD_LEFT]) {
-            low &= ~JOYPAD_LEFT_MASK;
-        }
-        if (joypad->pressed[JOYPAD_UP]) {
-            low &= ~JOYPAD_UP_MASK;
-        }
-        if (joypad->pressed[JOYPAD_DOWN]) {
-            low &= ~JOYPAD_DOWN_MASK;
-        }
-    }
-
-    if (buttons_selected) {
-        if (joypad->pressed[JOYPAD_A]) {
-            low &= ~JOYPAD_A_MASK;
-        }
-        if (joypad->pressed[JOYPAD_B]) {
-            low &= ~JOYPAD_B_MASK;
-        }
-        if (joypad->pressed[JOYPAD_SELECT]) {
-            low &= ~JOYPAD_SELECT_MASK;
-        }
-        if (joypad->pressed[JOYPAD_START]) {
-            low &= ~JOYPAD_START_MASK;
-        }
-    }
-
-    return 0xC0 | (joypad->select & (JOYPAD_SELECT_BUTTONS_MASK | JOYPAD_SELECT_DPAD_MASK)) | low;
+void joypad_set(Bus *bus, uint8_t pressed) {
+    if (pressed == bus->joyp_pressed) return;
+    bus->joyp_pressed = pressed;
+    joypad_update(bus);
 }
 
-void joypad_write(joypad_t* joypad, uint8_t value) {
-    joypad->select = value & (JOYPAD_SELECT_BUTTONS_MASK | JOYPAD_SELECT_DPAD_MASK);
+uint8_t joypad_read(const Bus *bus) {
+    return 0xC0 | (bus->p1 & 0x30) | joypad_lines(bus);
 }
 
-void joypad_set_pressed(joypad_t* joypad, joypad_button_t button, bool pressed) {
-    joypad->pressed[button] = pressed;
+void joypad_write(Bus *bus, uint8_t value) {
+    bus->p1 = value & 0x30;
+    joypad_update(bus);
+}
+
+static uint8_t joypad_lines(const Bus *bus) {
+    uint8_t lines = 0x0F;
+    if (!(bus->p1 & 0x10)) lines &= ~(bus->joyp_pressed >> 4) & 0x0F; // D-pad select
+    if (!(bus->p1 & 0x20)) lines &= ~(bus->joyp_pressed & 0x0F) & 0x0F; // Button select
+    return lines;
+}
+
+static void joypad_update(Bus *bus) {
+    uint8_t lines = joypad_lines(bus);
+    if (bus->joyp_prev_lines & ~lines) bus_request_interrupt(bus, INTERRUPT_BIT_JOYPAD);
+    bus->joyp_prev_lines = lines;
 }
