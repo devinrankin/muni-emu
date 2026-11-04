@@ -1,6 +1,7 @@
 #include "sm83.h"
 #include "sm83_opcodes.h"
 #include "sm83_alu.h"
+#include "../timer.h"
 
 typedef enum {
     REG_NONE,
@@ -99,7 +100,9 @@ static unsigned op_stop(Sm83 *sm83, uint8_t opcode);
 static unsigned op_di(Sm83 *sm83, uint8_t opcode);
 static unsigned op_ei(Sm83 *sm83, uint8_t opcode);
 static unsigned op_nop(Sm83 *sm83, uint8_t opcode);
-static unsigned op_cb(Sm83 *sm83, uint8_t opcode);
+static inline unsigned op_cb(Sm83 *sm83, uint8_t opcode);
+
+static inline unsigned sm83_cb_opcode_execute(Sm83 *sm83, uint8_t opcode);
 
 /* Disassembly helper declarations */
 static void format_operand(char* out, size_t out_size, Sm83DisasmOperand operand, uint8_t imm8, uint16_t imm16);
@@ -646,11 +649,11 @@ static const Sm83OpcodeDescriptor cb_opcode_table[256] = {
     [0xFF] = { op_set_b3_r8, 2, OP_SET, { OPERAND_BIT, 7 }, { OPERAND_R8, REG_A } }
 };
 
-unsigned sm83_opcode_execute(Sm83 *sm83, uint8_t opcode) {
+inline unsigned sm83_opcode_execute(Sm83 *sm83, uint8_t opcode) {
     return opcode_table[opcode].handler(sm83, opcode);
 }
 
-static unsigned sm83_cb_opcode_execute(Sm83 *sm83, uint8_t opcode) {
+static inline unsigned sm83_cb_opcode_execute(Sm83 *sm83, uint8_t opcode) {
     return cb_opcode_table[opcode].handler(sm83, opcode);
 }
 
@@ -818,7 +821,7 @@ static unsigned op_ld_r8_r8(Sm83 *sm83, uint8_t opcode) {
     uint8_t value = sm83_read_r8(sm83, src);
     sm83_write_r8(sm83, dst, value);
 
-    return 1;
+    return dst == R8_HLMEM || src == R8_HLMEM ? 2 : 1;
 }
 
 static unsigned op_ld_r8_imm8(Sm83 *sm83, uint8_t opcode) {
@@ -827,7 +830,7 @@ static unsigned op_ld_r8_imm8(Sm83 *sm83, uint8_t opcode) {
 
     sm83_write_r8(sm83, dst, value);
 
-    return 2;
+    return dst == R8_HLMEM ? 3 : 2;
 }
 
 static unsigned op_ld_r16mem_a(Sm83 *sm83, uint8_t opcode) {
@@ -1012,7 +1015,7 @@ static unsigned op_inc_r8(Sm83 *sm83, uint8_t opcode) {
     uint8_t value = sm83_read_r8(sm83, operand);
     uint8_t result = value + 1;
 
-    bool half_carry = (value & 0x0F) == 0;
+    bool half_carry = (value & 0x0F) == 0x0F;
 
     uint8_t flags = 0;
 
@@ -1539,8 +1542,8 @@ static unsigned op_ret_cc(Sm83 *sm83, uint8_t opcode) {
 }
 
 static unsigned op_reti(Sm83 *sm83, uint8_t opcode) {
-    sm83->ime = true;
     (void)op_ret(sm83, opcode);
+    sm83->ime = true;
 
     return 4;
 }
@@ -1569,9 +1572,9 @@ static unsigned op_stop(Sm83 *sm83, uint8_t opcode) {
     (void)opcode;
     (void)sm83_fetch8(sm83);
 
+    timer_write_div(sm83->bus);
     if (BIT(sm83->bus->key1, 0)) {
-        BIT_CLEAR(sm83->bus->key1, 0);
-        BIT_SET(sm83->bus->key1, 7);
+        sm83->bus->key1 = (sm83->bus->key1 & 0x7E) ^ 0x80;
         return 1;
     }
 
@@ -1604,7 +1607,7 @@ static unsigned op_nop(Sm83 *sm83, uint8_t opcode) {
     return 1;
 }
 
-static unsigned op_cb(Sm83 *sm83, uint8_t opcode) {
+static inline unsigned op_cb(Sm83 *sm83, uint8_t opcode) {
     opcode = sm83_fetch8(sm83);
     return sm83_cb_opcode_execute(sm83, opcode);
 }

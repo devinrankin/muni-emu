@@ -107,6 +107,6 @@ typedef struct {
     Sm83DisasmOperand src;
 } Sm83OpcodeDescriptor;
 
-unsigned sm83_opcode_execute(Sm83 *sm83, uint8_t opcode);
+inline unsigned sm83_opcode_execute(Sm83 *sm83, uint8_t opcode);
 void sm83_disassemble(Sm83 *sm83, uint8_t opcode, uint16_t pc, char *out, size_t out_size);
 #endif
